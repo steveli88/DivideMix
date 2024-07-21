@@ -295,7 +295,7 @@ def label_stats(noisy_label, true_label, epoch, log):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="PyTorch CIFAR Training")
-    parser.add_argument("--batch_size", default=64, type=int, help="train batchsize")
+    parser.add_argument("--batch_size", default=128, type=int, help="train batchsize")
     parser.add_argument(
         "--lr", "--learning_rate", default=0.02, type=float, help="initial learning rate"
     )
@@ -350,6 +350,7 @@ if __name__ == "__main__":
     time_digits = str(datetime.now())[-6:]
     noise_file = os.path.join(directory, f'{args.noise_mode}_{time_digits}.json')
 
+    # todo need to copy the dataset to place
     loader = dataloader.cifar_dataloader(
         args.dataset,
         r=args.r,
