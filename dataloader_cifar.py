@@ -55,6 +55,10 @@ class cifar_dataset(Dataset):
 
             if os.path.exists(noise_file):
                 noise_label = json.load(open(noise_file,"r"))
+                print('Load noisy label from file')
+                noise_or_not = np.transpose(noise_label) != np.transpose(train_label)
+                actual_noise_rate = np.sum(noise_or_not) / 50000
+                print('Over all noise rate is ', actual_noise_rate)
             else:    #inject noise   
                 noise_label = []
                 idx = list(range(50000))
