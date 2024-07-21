@@ -13,6 +13,7 @@ import numpy as np
 from PreResNet import *
 from sklearn.mixture import GaussianMixture
 import dataloader_cifar as dataloader
+from datetime import datetime
 
 
 # Training
@@ -314,10 +315,10 @@ if __name__ == "__main__":
     parser.add_argument("--gpuid", default=0, type=int)
     parser.add_argument("--num_class", default=10, type=int)
     parser.add_argument(
-        "--data_path", default="./cifar-10", type=str, help="path to dataset"
+        "--data_path", default="data/cifar-10-batches-py", type=str, help="path to dataset"
     )
     parser.add_argument("--dataset", default="cifar10", type=str)
-    parser.add_argument('--cluster_prior_epoch', default=100, type=int)
+    parser.add_argument('--cluster_prior_epoch', default=300, type=int)
     args = parser.parse_args()
 
     torch.cuda.set_device(args.gpuid)
@@ -326,16 +327,17 @@ if __name__ == "__main__":
     torch.cuda.manual_seed_all(args.seed)
 
     curr_time = time.strftime("%m%d%H%M", time.localtime())
-    directory = os.path.join('checkpoint', f'{curr_time}_{args.dataset}_{args.noise_mode}_{args.noise_rate}')
+    directory = os.path.join('checkpoint', f'{curr_time}_{args.dataset}_{args.noise_mode}_{args.r}')
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-    stats_name = f'{args.dataset}_{args.noise_type}_{args.num_epochs}_stats_{curr_time}.txt'
-    test_name = f'{args.dataset}_{args.noise_type}_{args.num_epochs}_acc_{curr_time}.txt'
+    stats_name = f'{args.dataset}_{args.noise_mode}_{args.num_epochs}_stats_{curr_time}.txt'
+    test_name = f'{args.dataset}_{args.noise_mode}_{args.num_epochs}_acc_{curr_time}.txt'
     stats_log = open(os.path.join(directory, stats_name), 'w')
     test_log = open(os.path.join(directory, test_name), 'w')
     test_log.write(str(args) + '\n')
 
+    # todo need to upload the clustering file
     cluster_file = 'feature_clusters_cifar100_r50_b256_e1000_c1000.pt'
     n_clusters = 1000
     test_log.write(cluster_file + '\n')
@@ -346,7 +348,7 @@ if __name__ == "__main__":
         warm_up = 30
 
     time_digits = str(datetime.now())[-6:]
-    noise_file = os.path.join(directory, f'{args.noise_type}_{time_digits}.json')
+    noise_file = os.path.join(directory, f'{args.noise_mode}_{time_digits}.json')
 
     loader = dataloader.cifar_dataloader(
         args.dataset,

@@ -10,7 +10,8 @@ from torchnet.meter import AUCMeter
 
             
 def unpickle(file):
-    import _pickle as cPickle
+    # import _pickle as cPickle
+    import pickle as cPickle
     with open(file, 'rb') as fo:
         dict = cPickle.load(fo, encoding='latin1')
     return dict
