@@ -317,6 +317,7 @@ if __name__ == "__main__":
         "--data_path", default="./cifar-10", type=str, help="path to dataset"
     )
     parser.add_argument("--dataset", default="cifar10", type=str)
+    parser.add_argument('--cluster_prior_epoch', default=100, type=int)
     args = parser.parse_args()
 
     torch.cuda.set_device(args.gpuid)
