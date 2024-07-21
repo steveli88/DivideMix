@@ -1,5 +1,6 @@
 from __future__ import print_function
 import sys
+import time
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -323,20 +324,28 @@ if __name__ == "__main__":
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
-    stats_log = open(
-        "./checkpoint/%s_%.1f_%s" % (args.dataset, args.r, args.noise_mode)
-        + "_stats.txt",
-        "w",
-    )
-    test_log = open(
-        "./checkpoint/%s_%.1f_%s" % (args.dataset, args.r, args.noise_mode) + "_acc.txt",
-        "w",
-    )
+    curr_time = time.strftime("%m%d%H%M", time.localtime())
+    directory = os.path.join('checkpoint', f'{curr_time}_{args.dataset}_{args.noise_mode}_{args.noise_rate}')
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
+    stats_name = f'{args.dataset}_{args.noise_type}_{args.num_epochs}_stats_{curr_time}.txt'
+    test_name = f'{args.dataset}_{args.noise_type}_{args.num_epochs}_acc_{curr_time}.txt'
+    stats_log = open(os.path.join(directory, stats_name), 'w')
+    test_log = open(os.path.join(directory, test_name), 'w')
+    test_log.write(str(args) + '\n')
+
+    cluster_file = 'feature_clusters_cifar100_r50_b256_e1000_c1000.pt'
+    n_clusters = 1000
+    test_log.write(cluster_file + '\n')
+    
     if args.dataset == "cifar10":
         warm_up = 10
     elif args.dataset == "cifar100":
         warm_up = 30
+
+    time_digits = str(datetime.now())[-6:]
+    noise_file = os.path.join(directory, f'{args.noise_type}_{time_digits}.json')
 
     loader = dataloader.cifar_dataloader(
         args.dataset,
@@ -346,7 +355,7 @@ if __name__ == "__main__":
         num_workers=5,
         root_dir=args.data_path,
         log=stats_log,
-        noise_file="%s/%.1f_%s.json" % (args.data_path, args.r, args.noise_mode),
+        noise_file=noise_file,
     )
 
     print("| Building net")
@@ -389,6 +398,33 @@ if __name__ == "__main__":
 
             pred1 = prob1 > args.p_threshold
             pred2 = prob2 > args.p_threshold
+
+            if epoch <= args.cluster_prior_epoch:
+                low_loss_idx_1 = torch.tensor(prob1 > args.p_threshold).cuda()
+                low_loss_idx_2 = torch.tensor(prob2 > args.p_threshold).cuda()
+                expanded_low_loss_idx_1 = torch.clone(low_loss_idx_1)
+                expanded_low_loss_idx_2 = torch.clone(low_loss_idx_2)
+                # expand correct label via clustering
+                cls = torch.load(cluster_file)
+                noisy_labels_tensor = torch.tensor(warmup_trainloader.dataset.noise_label).cuda()
+                for i in range(n_clusters):
+                    correct_labels_1 = torch.masked_select(noisy_labels_tensor[cls[i]['idx']],
+                                                           low_loss_idx_1[cls[i]['idx']]) # what are labels of low loss samples?
+                    expanded_low_loss_1 = torch.isin(noisy_labels_tensor[cls[i]['idx']], correct_labels_1) + \
+                                          low_loss_idx_1[cls[i]['idx']] # cls[i]['idx'] same cluster samples; torch.isin match low loss label
+                    expanded_low_loss_idx_1[cls[i]['idx']] = expanded_low_loss_1 #
+
+                    correct_labels_2 = torch.masked_select(noisy_labels_tensor[cls[i]['idx']],
+                                                           low_loss_idx_2[cls[i]['idx']])
+                    expanded_low_loss_2 = torch.isin(noisy_labels_tensor[cls[i]['idx']], correct_labels_2) + \
+                                          low_loss_idx_2[cls[i]['idx']]
+                    expanded_low_loss_idx_2[cls[i]['idx']] = expanded_low_loss_2
+
+                prob1 = (expanded_low_loss_idx_1 * 1.).cpu().numpy()
+                prob2 = (expanded_low_loss_idx_2 * 1.).cpu().numpy()
+
+                pred1 = (prob1 > args.p_threshold)
+                pred2 = (prob2 > args.p_threshold)
 
             print("Train Net1")
             labeled_trainloader, unlabeled_trainloader = loader.run(
