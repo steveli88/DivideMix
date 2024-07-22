@@ -319,6 +319,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--dataset", default="cifar10", type=str)
     parser.add_argument('--cluster_prior_epoch', default=300, type=int)
+    parser.add_argument("--cluster_file", default='feature_clusters_cifar100_r50_b384_e1000_c1000.pt', type=str)
     args = parser.parse_args()
 
     torch.cuda.set_device(args.gpuid)
@@ -338,14 +339,16 @@ if __name__ == "__main__":
     test_log.write(str(args) + '\n')
 
     # todo need to upload the clustering file
-    cluster_file = 'feature_clusters_cifar100_r50_b256_e1000_c1000.pt'
+    cluster_file = args.cluster_file
     n_clusters = 1000
     test_log.write(cluster_file + '\n')
     
     if args.dataset == "cifar10":
         warm_up = 10
+        assert "_cifar10_" in cluster_file
     elif args.dataset == "cifar100":
         warm_up = 30
+        assert "_cifar100_" in cluster_file
 
     time_digits = str(datetime.now())[-6:]
     noise_file = os.path.join(directory, f'{args.noise_mode}_{time_digits}.json')
