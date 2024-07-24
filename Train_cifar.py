@@ -14,6 +14,7 @@ from PreResNet import *
 from sklearn.mixture import GaussianMixture
 import dataloader_cifar as dataloader
 from datetime import datetime
+import math
 
 
 # Training
@@ -118,22 +119,23 @@ def train(epoch, net, net2, optimizer, labeled_trainloader, unlabeled_trainloade
         loss.backward()
         optimizer.step()
 
-        sys.stdout.write("\r")
-        sys.stdout.write(
-            "%s:%.1f-%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t Labeled loss: %.2f  Unlabeled loss: %.2f"
-            % (
-                args.dataset,
-                args.r,
-                args.noise_mode,
-                epoch,
-                args.num_epochs,
-                batch_idx + 1,
-                num_iter,
-                Lx.item(),
-                Lu.item(),
+        if batch_idx % 100 == 0:
+            sys.stdout.write("\r")
+            sys.stdout.write(
+                "%s:%.1f-%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t Labeled loss: %.2f  Unlabeled loss: %.2f"
+                % (
+                    args.dataset,
+                    args.r,
+                    args.noise_mode,
+                    epoch,
+                    args.num_epochs,
+                    batch_idx + 1,
+                    num_iter,
+                    Lx.item(),
+                    Lu.item(),
+                )
             )
-        )
-        sys.stdout.flush()
+            sys.stdout.flush()
 
 
 def warmup(epoch, net, optimizer, dataloader):
@@ -154,21 +156,22 @@ def warmup(epoch, net, optimizer, dataloader):
         L.backward()
         optimizer.step()
 
-        sys.stdout.write("\r")
-        sys.stdout.write(
-            "%s:%.1f-%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t CE-loss: %.4f"
-            % (
-                args.dataset,
-                args.r,
-                args.noise_mode,
-                epoch,
-                args.num_epochs,
-                batch_idx + 1,
-                num_iter,
-                loss.item(),
+        if batch_idx % 100 == 0:
+            sys.stdout.write("\r")
+            sys.stdout.write(
+                "%s:%.1f-%s | Epoch [%3d/%3d] Iter[%3d/%3d]\t CE-loss: %.4f"
+                % (
+                    args.dataset,
+                    args.r,
+                    args.noise_mode,
+                    epoch,
+                    args.num_epochs,
+                    batch_idx + 1,
+                    num_iter,
+                    loss.item(),
+                )
             )
-        )
-        sys.stdout.flush()
+            sys.stdout.flush()
 
 
 def test(epoch, net1, net2):
@@ -278,24 +281,34 @@ def label_stats(noisy_label, true_label, epoch, log):
     label_stats = sort_dict(label_stats)
     correct_label_stats = sort_dict(correct_label_stats)
 
-    log.write("Epoch %d \n" % epoch)
-    log.write("Number of labels for classes: %s \n" % label_stats)
-    log.write("Correct labels for classes: %s \n" % correct_label_stats)
-    log.write("Overall accuracy: %.2f \n" % (correct_label / len(noisy_label)))
+    log.write('Epoch %d \n' % epoch)
+    log.write('Number of labels for classes: %s \n' % label_stats)
+    log.write('Correct labels for classes: %s \n' % correct_label_stats)
+    log.write('Overall accuracy: %.2f \n' % (correct_label / len(noisy_label)))
 
-    for key in correct_label_stats:
-        log.write(
-            "The Precision of Class %d is %.2f \n"
-            % (key, correct_label_stats[key] / label_stats[key])
-        )
+    log.write('Total sample selected: %.2f \n' % (sum(label_stats.values())))
+    log.write('Total clean sample selected: %.2f \n' % (sum(correct_label_stats.values())))
+    # for key in correct_label_stats:
+    #     log.write('The Precision of Class %d is %.2f \n' % (key, correct_label_stats[key] / label_stats[key]))
 
     log.flush()
+
+
+def adjust_learning_rate(args, optimizer1, optimizer2, epoch):
+    lr = args.lr
+    eta_min = lr * (0.1 ** 2)
+    lr = eta_min + (lr - eta_min) * (1 + math.cos(math.pi * epoch / args.num_epochs)) / 2
+
+    for param_group in optimizer1.param_groups:
+        param_group['lr'] = lr
+    for param_group in optimizer2.param_groups:
+        param_group['lr'] = lr
 
 
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="PyTorch CIFAR Training")
-    parser.add_argument("--batch_size", default=128, type=int, help="train batchsize")
+    parser.add_argument("--batch_size", default=64, type=int, help="train batchsize")
     parser.add_argument(
         "--lr", "--learning_rate", default=0.02, type=float, help="initial learning rate"
     )
@@ -382,13 +395,16 @@ if __name__ == "__main__":
     all_loss = [[], []]  # save the history of losses from two networks
 
     for epoch in range(args.num_epochs + 1):
-        lr = args.lr
-        if epoch >= 150:
-            lr /= 10
-        for param_group in optimizer1.param_groups:
-            param_group["lr"] = lr
-        for param_group in optimizer2.param_groups:
-            param_group["lr"] = lr
+        # lr = args.lr
+        # if epoch >= 150:
+        #     lr /= 10
+        # for param_group in optimizer1.param_groups:
+        #     param_group["lr"] = lr
+        # for param_group in optimizer2.param_groups:
+        #     param_group["lr"] = lr
+
+        adjust_learning_rate(args, optimizer1, optimizer2, epoch)
+
         test_loader = loader.run("test")
         eval_loader = loader.run("eval_train")
 
@@ -440,6 +456,8 @@ if __name__ == "__main__":
             train(
                 epoch, net1, net2, optimizer1, labeled_trainloader, unlabeled_trainloader
             )  # train net1
+            stats_log.write('Low loss labels from Model 2 to Model 1\n')
+            label_stats(labeled_trainloader.dataset.noise_label, labeled_trainloader.dataset.clean_label, epoch, stats_log)
 
             print("\nTrain Net2")
             labeled_trainloader, unlabeled_trainloader = loader.run(
@@ -448,6 +466,10 @@ if __name__ == "__main__":
             train(
                 epoch, net2, net1, optimizer2, labeled_trainloader, unlabeled_trainloader
             )  # train net2
+            stats_log.write('Low loss labels from Model 1 to Model 2\n')
+            label_stats(labeled_trainloader.dataset.noise_label, labeled_trainloader.dataset.clean_label, epoch, stats_log)
+
+            stats_log.write('\n')
 
         test(epoch, net1, net2)
     pass

@@ -103,7 +103,10 @@ class cifar_dataset(Dataset):
                 
                 self.train_data = train_data[pred_idx]
                 self.noise_label = [noise_label[i] for i in pred_idx]                          
-                print("%s data has a size of %d"%(self.mode,len(self.noise_label)))            
+                print("%s data has a size of %d"%(self.mode,len(self.noise_label)))
+                
+                self.clean_label = [train_label[i] for i in pred_idx]
+                self.clean_label_idx = pred_idx        
                 
     def __getitem__(self, index):
         if self.mode=='labeled':
