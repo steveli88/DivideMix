@@ -295,6 +295,14 @@ def label_stats(noisy_label, true_label, epoch, log):
 
 
 def adjust_learning_rate(args, optimizer1, optimizer2, epoch):
+    # lr = args.lr
+    # if epoch >= 150:
+    #     lr /= 10
+    # for param_group in optimizer1.param_groups:
+    #     param_group["lr"] = lr
+    # for param_group in optimizer2.param_groups:
+    #     param_group["lr"] = lr
+
     lr = args.lr
     eta_min = lr * (0.1 ** 2)
     lr = eta_min + (lr - eta_min) * (1 + math.cos(math.pi * epoch / args.num_epochs)) / 2
@@ -395,13 +403,7 @@ if __name__ == "__main__":
     all_loss = [[], []]  # save the history of losses from two networks
 
     for epoch in range(args.num_epochs + 1):
-        # lr = args.lr
-        # if epoch >= 150:
-        #     lr /= 10
-        # for param_group in optimizer1.param_groups:
-        #     param_group["lr"] = lr
-        # for param_group in optimizer2.param_groups:
-        #     param_group["lr"] = lr
+
 
         adjust_learning_rate(args, optimizer1, optimizer2, epoch)
 
