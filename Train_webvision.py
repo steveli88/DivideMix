@@ -1,5 +1,7 @@
 from __future__ import print_function
 import sys
+import time
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -15,27 +17,6 @@ from sklearn.mixture import GaussianMixture
 import dataloader_webvision as dataloader
 import torchnet
 
-parser = argparse.ArgumentParser(description='PyTorch WebVision Training')
-parser.add_argument('--batch_size', default=32, type=int, help='train batchsize') 
-parser.add_argument('--lr', '--learning_rate', default=0.01, type=float, help='initial learning rate')
-parser.add_argument('--alpha', default=0.5, type=float, help='parameter for Beta')
-parser.add_argument('--lambda_u', default=0, type=float, help='weight for unsupervised loss')
-parser.add_argument('--p_threshold', default=0.5, type=float, help='clean probability threshold')
-parser.add_argument('--T', default=0.5, type=float, help='sharpening temperature')
-parser.add_argument('--num_epochs', default=80, type=int)
-parser.add_argument('--id', default='',type=str)
-parser.add_argument('--seed', default=123)
-parser.add_argument('--gpuid', default=0, type=int)
-parser.add_argument('--num_class', default=50, type=int)
-parser.add_argument('--data_path', default='./dataset/', type=str, help='path to dataset')
-
-args = parser.parse_args()
-
-torch.cuda.set_device(args.gpuid)
-random.seed(args.seed)
-torch.manual_seed(args.seed)
-torch.cuda.manual_seed_all(args.seed)
-
 
 # Training
 def train(epoch,net,net2,optimizer,labeled_trainloader,unlabeled_trainloader):
@@ -46,10 +27,10 @@ def train(epoch,net,net2,optimizer,labeled_trainloader,unlabeled_trainloader):
     num_iter = (len(labeled_trainloader.dataset)//args.batch_size)+1
     for batch_idx, (inputs_x, inputs_x2, labels_x, w_x) in enumerate(labeled_trainloader):      
         try:
-            inputs_u, inputs_u2 = unlabeled_train_iter.next()
+            inputs_u, inputs_u2 = next(unlabeled_train_iter)
         except:
             unlabeled_train_iter = iter(unlabeled_trainloader)
-            inputs_u, inputs_u2 = unlabeled_train_iter.next()                 
+            inputs_u, inputs_u2 = next(unlabeled_train_iter)
         batch_size = inputs_x.size(0)
         
         # Transform label to one-hot
@@ -206,71 +187,199 @@ def create_model():
     model = model.cuda()
     return model
 
-stats_log=open('./checkpoint/%s'%(args.id)+'_stats.txt','w') 
-test_log=open('./checkpoint/%s'%(args.id)+'_acc.txt','w')     
 
-warm_up=1
+def sort_dict(myDict):
+    myKeys = list(myDict.keys())
+    myKeys.sort()
+    sorted_dict = {i: myDict[i] for i in myKeys}
+    return sorted_dict
 
-loader = dataloader.webvision_dataloader(batch_size=args.batch_size,num_workers=5,root_dir=args.data_path,log=stats_log, num_class=args.num_class)
 
-print('| Building net')
-net1 = create_model()
-net2 = create_model()
-cudnn.benchmark = True
+def label_stats(noisy_label, true_label, epoch, log):
+    label_stats = {}
+    correct_label_stats = {}
+    correct_label = 0
+    for i in range(len(noisy_label)):
 
-criterion = SemiLoss()
-optimizer1 = optim.SGD(net1.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
-optimizer2 = optim.SGD(net2.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+        if noisy_label[i] in label_stats:
+            label_stats[noisy_label[i]] += 1
+        else:
+            label_stats[noisy_label[i]] = 1
 
-CE = nn.CrossEntropyLoss(reduction='none')
-CEloss = nn.CrossEntropyLoss()
-conf_penalty = NegEntropy()
+        if noisy_label[i] == true_label[i]:
+            correct_label += 1
+            if noisy_label[i] in correct_label_stats:
+                correct_label_stats[noisy_label[i]] += 1
+            else:
+                correct_label_stats[noisy_label[i]] = 1
 
-all_loss = [[],[]] # save the history of losses from two networks
-acc_meter = torchnet.meter.ClassErrorMeter(topk=[1,5], accuracy=True)
+    label_stats = sort_dict(label_stats)
+    correct_label_stats = sort_dict(correct_label_stats)
 
-for epoch in range(args.num_epochs+1):   
-    lr=args.lr
-    if epoch >= 40:
-        lr /= 10      
-    for param_group in optimizer1.param_groups:
-        param_group['lr'] = lr       
-    for param_group in optimizer2.param_groups:
-        param_group['lr'] = lr              
-    eval_loader = loader.run('eval_train')  
-    web_valloader = loader.run('test')
-    imagenet_valloader = loader.run('imagenet')   
-    
-    if epoch<warm_up:       
+    log.write('Epoch %d \n' % epoch)
+    log.write('Number of labels for classes: %s \n' % label_stats)
+    log.write('Correct labels for classes: %s \n' % correct_label_stats)
+    log.write('Overall accuracy: %.2f \n' % (correct_label / len(noisy_label)))
+
+    log.write('Total sample selected: %.2f \n' % (sum(label_stats.values())))
+    log.write('Total clean sample selected: %.2f \n' % (sum(correct_label_stats.values())))
+    # for key in correct_label_stats:
+    #     log.write('The Precision of Class %d is %.2f \n' % (key, correct_label_stats[key] / label_stats[key]))
+
+    log.flush()
+
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser(description='PyTorch WebVision Training')
+    parser.add_argument('--batch_size', default=32, type=int, help='train batchsize')
+    parser.add_argument('--lr', '--learning_rate', default=0.01, type=float, help='initial learning rate')
+    parser.add_argument('--alpha', default=0.5, type=float, help='parameter for Beta')
+    parser.add_argument('--lambda_u', default=0, type=float, help='weight for unsupervised loss')
+    parser.add_argument('--p_threshold', default=0.5, type=float, help='clean probability threshold')
+    parser.add_argument('--T', default=0.5, type=float, help='sharpening temperature')
+    parser.add_argument('--num_epochs', default=100, type=int)
+    parser.add_argument('--id', default='', type=str)
+    parser.add_argument('--seed', default=123)
+    parser.add_argument('--gpuid', default=0, type=int)
+    parser.add_argument('--num_class', default=50, type=int)
+    parser.add_argument('--data_path', default='/home/lorentz/Project/Datasets/miniwebvision/', type=str, help='path to dataset')
+
+    parser.add_argument('--cluster_prior_epoch', default=100, type=int)
+    parser.add_argument("--cluster_file", default='features_clusters_webvision_dinov2_vitl14_reg_f1024_c1000.pt', type=str)
+
+    args = parser.parse_args()
+
+    torch.cuda.set_device(args.gpuid)
+    random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
+    curr_time = time.strftime("%m%d%H%M", time.localtime())
+    directory = os.path.join('checkpoint', f'{curr_time}_webvision')
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
+    stats_name = f'webvision_{args.num_epochs}_stats_{curr_time}.txt'
+    test_name = f'webvision_{args.num_epochs}_acc_{curr_time}.txt'
+    stats_log = open(os.path.join(directory, stats_name), 'w')
+    test_log = open(os.path.join(directory, test_name), 'w')
+    test_log.write(str(args) + '\n')
+
+    # todo need to upload the clustering file
+    cluster_file = args.cluster_file
+    n_clusters = 1000 # todo change cluster number according to needs
+    test_log.write(cluster_file + '\n')
+
+    warm_up=1
+
+    loader = dataloader.webvision_dataloader(batch_size=args.batch_size,num_workers=5,root_dir=args.data_path,log=stats_log, num_class=args.num_class)
+
+    print('| Building net')
+    net1 = create_model()
+    net2 = create_model()
+    cudnn.benchmark = True
+
+    criterion = SemiLoss()
+    optimizer1 = optim.SGD(net1.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+    optimizer2 = optim.SGD(net2.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+
+    CE = nn.CrossEntropyLoss(reduction='none')
+    CEloss = nn.CrossEntropyLoss()
+    conf_penalty = NegEntropy()
+
+    all_loss = [[],[]] # save the history of losses from two networks
+    acc_meter = torchnet.meter.ClassErrorMeter(topk=[1,5], accuracy=True)
+
+    for epoch in range(args.num_epochs+1):
+        lr=args.lr
+        if epoch >= 50:
+            lr /= 10
+        for param_group in optimizer1.param_groups:
+            param_group['lr'] = lr
+        for param_group in optimizer2.param_groups:
+            param_group['lr'] = lr
+
+        eval_loader = loader.run('eval_train')
+        web_valloader = loader.run('test')
+        imagenet_valloader = loader.run('imagenet')
         warmup_trainloader = loader.run('warmup')
-        print('Warmup Net1')
-        warmup(epoch,net1,optimizer1,warmup_trainloader)    
-        print('\nWarmup Net2')
-        warmup(epoch,net2,optimizer2,warmup_trainloader) 
-   
-    else:                
-        pred1 = (prob1 > args.p_threshold)      
-        pred2 = (prob2 > args.p_threshold)      
-        
-        print('Train Net1')
-        labeled_trainloader, unlabeled_trainloader = loader.run('train',pred2,prob2) # co-divide
-        train(epoch,net1,net2,optimizer1,labeled_trainloader, unlabeled_trainloader) # train net1  
-        
-        print('\nTrain Net2')
-        labeled_trainloader, unlabeled_trainloader = loader.run('train',pred1,prob1) # co-divide
-        train(epoch,net2,net1,optimizer2,labeled_trainloader, unlabeled_trainloader) # train net2    
 
-    
-    web_acc = test(epoch,net1,net2,web_valloader)  
-    imagenet_acc = test(epoch,net1,net2,imagenet_valloader)  
-    
-    print("\n| Test Epoch #%d\t WebVision Acc: %.2f%% (%.2f%%) \t ImageNet Acc: %.2f%% (%.2f%%)\n"%(epoch,web_acc[0],web_acc[1],imagenet_acc[0],imagenet_acc[1]))  
-    test_log.write('Epoch:%d \t WebVision Acc: %.2f%% (%.2f%%) \t ImageNet Acc: %.2f%% (%.2f%%)\n'%(epoch,web_acc[0],web_acc[1],imagenet_acc[0],imagenet_acc[1]))
-    test_log.flush()  
-       
-    print('\n==== net 1 evaluate training data loss ====') 
-    prob1,all_loss[0]=eval_train(net1,all_loss[0])   
-    print('\n==== net 2 evaluate training data loss ====') 
-    prob2,all_loss[1]=eval_train(net2,all_loss[1])
-    torch.save(all_loss,'./checkpoint/%s.pth.tar'%(args.id))        
+        if epoch < warm_up:
+            warmup_trainloader = loader.run("warmup")
+            print("Warmup Net1")
+            warmup(epoch, net1, optimizer1, warmup_trainloader)
+            print("\nWarmup Net2")
+            warmup(epoch, net2, optimizer2, warmup_trainloader)
+
+        else:
+            prob1, all_loss[0] = eval_train(net1, all_loss[0])
+            prob2, all_loss[1] = eval_train(net2, all_loss[1])
+
+            pred1 = prob1 > args.p_threshold
+            pred2 = prob2 > args.p_threshold
+
+            if epoch <= args.cluster_prior_epoch:
+                low_loss_idx_1 = torch.tensor(prob1 > args.p_threshold).cuda()
+                low_loss_idx_2 = torch.tensor(prob2 > args.p_threshold).cuda()
+                expanded_low_loss_idx_1 = torch.clone(low_loss_idx_1)
+                expanded_low_loss_idx_2 = torch.clone(low_loss_idx_2)
+                # expand correct label via clustering
+                cls = torch.load(cluster_file)
+                noisy_labels_tensor = torch.tensor(warmup_trainloader.dataset.noise_label).cuda()
+                for i in range(n_clusters):
+                    correct_labels_1 = torch.masked_select(noisy_labels_tensor[cls[i]['idx']],
+                                                           low_loss_idx_1[cls[i][
+                                                               'idx']])  # what are labels of low loss samples?
+                    expanded_low_loss_1 = torch.isin(noisy_labels_tensor[cls[i]['idx']], correct_labels_1) + \
+                                          low_loss_idx_1[cls[i][
+                                              'idx']]  # cls[i]['idx'] same cluster samples; torch.isin match low loss label
+                    expanded_low_loss_idx_1[cls[i]['idx']] = expanded_low_loss_1  #
+
+                    correct_labels_2 = torch.masked_select(noisy_labels_tensor[cls[i]['idx']],
+                                                           low_loss_idx_2[cls[i]['idx']])
+                    expanded_low_loss_2 = torch.isin(noisy_labels_tensor[cls[i]['idx']], correct_labels_2) + \
+                                          low_loss_idx_2[cls[i]['idx']]
+                    expanded_low_loss_idx_2[cls[i]['idx']] = expanded_low_loss_2
+
+                prob1 = (expanded_low_loss_idx_1 * 1.).cpu().numpy()
+                prob2 = (expanded_low_loss_idx_2 * 1.).cpu().numpy()
+
+                pred1 = (prob1 > args.p_threshold)
+                pred2 = (prob2 > args.p_threshold)
+
+            print("Train Net1")
+            labeled_trainloader, unlabeled_trainloader = loader.run(
+                "train", pred2, prob2
+            )  # co-divide
+            train(
+                epoch, net1, net2, optimizer1, labeled_trainloader, unlabeled_trainloader
+            )  # train net1
+            # stats_log.write('Low loss labels from Model 2 to Model 1\n')
+            # label_stats(labeled_trainloader.dataset.noise_label, labeled_trainloader.dataset.clean_label, epoch, stats_log)
+
+            print("\nTrain Net2")
+            labeled_trainloader, unlabeled_trainloader = loader.run(
+                "train", pred1, prob1
+            )  # co-divide
+            train(
+                epoch, net2, net1, optimizer2, labeled_trainloader, unlabeled_trainloader
+            )  # train net2
+            # stats_log.write('Low loss labels from Model 1 to Model 2\n')
+            # label_stats(labeled_trainloader.dataset.noise_label, labeled_trainloader.dataset.clean_label, epoch, stats_log)
+
+            stats_log.write('\n')
+
+        web_acc = test(epoch,net1,net2,web_valloader)
+        imagenet_acc = test(epoch,net1,net2,imagenet_valloader)
+
+        print("\n| Test Epoch #%d\t WebVision Acc: %.2f%% (%.2f%%) \t ImageNet Acc: %.2f%% (%.2f%%)\n"%(epoch,web_acc[0],web_acc[1],imagenet_acc[0],imagenet_acc[1]))
+        test_log.write('Epoch:%d \t WebVision Acc: %.2f%% (%.2f%%) \t ImageNet Acc: %.2f%% (%.2f%%)\n'%(epoch,web_acc[0],web_acc[1],imagenet_acc[0],imagenet_acc[1]))
+        test_log.flush()
+
+        # print('\n==== net 1 evaluate training data loss ====')
+        # prob1,all_loss[0]=eval_train(net1,all_loss[0])
+        # print('\n==== net 2 evaluate training data loss ====')
+        # prob2,all_loss[1]=eval_train(net2,all_loss[1])
+        # torch.save(all_loss,'./checkpoint/%s.pth.tar'%(args.id))
 

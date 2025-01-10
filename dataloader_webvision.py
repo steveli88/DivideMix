@@ -53,7 +53,8 @@ class webvision_dataset(Dataset):
                 target = int(target)
                 if target<num_class:
                     train_imgs.append(img)
-                    self.train_labels[img]=target            
+                    self.train_labels[img]=target
+            self.noise_label = list(self.train_labels.values())
             if self.mode == 'all':
                 self.train_imgs = train_imgs
             else:                   
